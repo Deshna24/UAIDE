@@ -1,0 +1,11 @@
+numpy
+Pillow
+scikit-image
+scipy
+matplotlib
+gradio
+scikit-learn
+joblib
+opencv-python
+torch
+torchvision
