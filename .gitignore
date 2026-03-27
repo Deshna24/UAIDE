@@ -1,10 +1,94 @@
-# Python-generated files
+# =====================================
+# Python
+# =====================================
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
+*.so
+
+# Packaging/build
 build/
 dist/
 wheels/
-*.egg-info
+*.egg-info/
+*.egg
+pip-wheel-metadata/
 
+# Test/cache/lint
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# =====================================
 # Virtual environments
-.venv
+# =====================================
+.venv/
+venv/
+env/
+ENV/
+
+# =====================================
+# IDE/editor
+# =====================================
+.vscode/
+.idea/
+
+# =====================================
+# OS files
+# =====================================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# =====================================
+# Logs/runtime
+# =====================================
+*.log
+*.out
+*.err
+*.tmp
+*.temp
+training_output.log
+train_run.log
+train_full_stats.log
+
+# =====================================
+# Notebook and local app state
+# =====================================
+.ipynb_checkpoints/
+.gradio/
+
+# =====================================
+# Large datasets (local only)
+# =====================================
+Deepfake vs Real/
+deepfakevsreal/
+SDFVD/
+
+# =====================================
+# Trained model artifacts/checkpoints
+# =====================================
+models_adv/
+models_advanced/
+models_adv_ensemble/
+models_adv_retrain/
+models_gan_vs_diffusion/
+models_v2/
+
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.joblib
+*.pkl
+*.npy
+*.npz
+
+# Root model artifacts in this repo
+model_dual_dataset.pt
+model_dual_dataset.pt_best
+video_resnet_lstm.pt

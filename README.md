@@ -1,148 +1,226 @@
-# UAIDE — AI-Generated Image & Video Detection
+# UAIDE - AI Generated Image and Video Detection
 
-UAIDE is a deepfake detection toolkit that combines a ResNet-50 + FFT feature-fusion model with Grad-CAM explainability, ethical assessment, and a Gradio web interface. It supports both image and video analysis, with auto-calibrated thresholds to minimise false positives on real images.
+UAIDE is a full deepfake detection toolkit with:
+- Image fake-vs-real detection using deep models and heuristic fallback.
+- Video fake-vs-real detection with temporal modeling and Grad-CAM.
+- AI source classification for detected AI content: GAN vs Diffusion.
+- Ethical and safety assessment with multi-check risk analysis.
+- Gradio web app for interactive image/video analysis.
+
+This README is a unified, conflict-free reference for the current repository state.
+
+## Main Features
+
+1. Image detection
+- EfficientNet + FFT fusion support.
+- Legacy CNN/ResNet/fusion model support.
+- Heuristic patch-based fallback detector.
+- Grad-CAM overlays for explainability.
+
+2. Video detection
+- ResNet + LSTM temporal model.
+- Frame-level and video-level fake probability.
+- Face-crop aware frame extraction.
+- Grad-CAM on suspicious frames.
+
+3. AI source detection
+- Second-stage classifier for AI-positive samples.
+- Predicts source family:
+    - GAN
+    - Diffusion
+- Exposes both probabilities in app outputs.
+
+4. Ethical assessment
+- Face, NSFW, age/minor risk, celebrity risk.
+- Metadata/tampering/watermark checks.
+- Hate symbol and misleading text checks.
+- Jurisdictional compliance signaling.
+
+## Repository Layout
+
+Top-level scripts and modules include:
+
+- app.py: Main Gradio application for image and video analysis.
+- detector.py: Heuristic patch/frequency/textural detector functions.
+- ethical_assessment.py: Multi-check ethical risk assessment.
+- video_model.py: Video model classes and Grad-CAM helpers.
+- video_data.py: Video dataset loading and frame extraction utilities.
+- train.py: Core training pipeline for classic models.
+- train_adv.py: Advanced EfficientNet + FFT training pipeline.
+- train_adv_quickstart.py: Faster advanced training runner.
+- train_gan_vs_diffusion.py: GAN-vs-Diffusion source classifier training.
+- train_video.py: Video model training.
+- predict_video.py: Video inference script.
+- evaluate_model.py: Evaluation entry point.
+- evaluate_validation.py: Validation evaluation.
+- evaluate_validation_quick.py: Quick validation evaluation.
+- evaluate_validation_comprehensive.py: Comprehensive validation evaluation.
+- compare_models.py: Model comparison utility.
+- diagnose_misclassification.py: Error and threshold diagnostics.
+- analyze_detector_bias.py: Bias analysis helper.
+- tune_face_detection.py: Face detection tuning helper.
+- check_gpu.py: GPU availability check.
+- demo.py: Demo runner.
+- demo_integrated_assessment.py: Integrated demo runner.
+- test_face_detection.py: Face detection tests.
+- test_integration.py: Integration tests.
+- requirements.txt: Python dependencies.
+- pyproject.toml: Project configuration.
+
+Key folders:
+
+- models_adv/: Advanced model artifacts.
+- models_v2/: Alternate model artifacts.
+- models_gan_vs_diffusion/: GAN-vs-Diffusion model artifacts.
+- models_advanced/: Additional model outputs.
+- models_adv_ensemble/: Ensemble model outputs.
+- models_adv_retrain/: Retraining outputs.
+- Deepfake vs Real/: Image dataset split folders.
+- deepfakevsreal/: Additional dataset storage.
+- SDFVD/: Video dataset storage.
 
 ## Quick Start
+
+Windows PowerShell:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-
-# Launch the web app
 python app.py
 ```
 
-The app loads the trained fusion model (`model_fusion_best.joblib_info.pkl`), auto-calibrates a detection threshold against the validation set, and opens a Gradio UI where you can upload images for analysis.
+Linux/macOS:
 
-## How It Works
-
-### Architecture
-
-The primary model (`DeepfakeFeatureFusion`) fuses two streams:
-
-1. **Spatial stream** — ResNet-50 backbone extracts high-level visual features.
-2. **Frequency stream** — Block-wise FFT (16x16 blocks) produces per-block magnitude and phase statistics, processed by a small CNN. Phase information captures alignment errors that AI generators leave behind.
-
-A **cross-attention** layer lets the spatial stream guide where to look for frequency anomalies. The fused representation passes through a classification head with progressive dropout.
-
-### Preprocessing
-
-Images are **padded and center-cropped** (224x224) instead of resized, preserving the original pixel-level detail that resize-based pipelines destroy.
-
-### Training Augmentations
-
-- Random crop, flip, rotation, colour jitter, affine
-- JPEG compression (quality 50–95) and Gaussian blur — simulates real-world image degradation so the model works on compressed uploads
-
-### Threshold Calibration
-
-At startup, `app.py` runs the real validation images through the model and sets a threshold at the 95th percentile of their fake-class probabilities, capping the false-positive rate on real images at ~5%.
-
-## Trained Model
-
-The default model is stored across these files:
-
-| File | Contents |
-|------|----------|
-| `model_fusion_best.joblib_info.pkl` | Model metadata (type, state-dict path, optimal threshold) |
-| `model_fusion_best.joblib_best_improved` | PyTorch state dict |
-
-Stored metrics from training:
-- **Best F1**: 0.792
-- **Best fake recall**: 0.681
-- **Optimal threshold**: 0.371
-
-Run `python evaluate_model.py` to compute full accuracy and ROC AUC on the Validation and Test splits.
-
-## Training
-
-Default settings reproduce the shipped model:
-
-```powershell
-python train.py --dataset "DeepfakeVsReal/Dataset" --max_per_class 1000
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
 ```
 
-This trains the `fusion` model type by default and writes `model_fusion_best.joblib_best_improved` + `model_fusion_best.joblib_info.pkl`.
+The app opens a local Gradio interface (usually on http://127.0.0.1:7860).
 
-Other model types are available via `--model`:
+## Model Loading Behavior in app.py
 
-| `--model` | Architecture |
-|-----------|-------------|
-| `fusion` (default) | ResNet-50 + block-wise FFT + cross-attention |
-| `resnet` | ResNet-50 transfer learning |
-| `cnn` | Custom 4-layer CNN |
-| `cnn_kfold` | CNN with K-fold cross-validation |
-| `fusion_dual` | Dual-stream residual + ResNet |
-| `rf` | Random Forest (handcrafted features) |
-| `gb` | XGBoost with GPU support |
+The app loads models in priority order:
 
-## Video Detection
+1. Image fake-vs-real model
+- Tries models_adv first.
+- Falls back to models_v2 and then other discovered artifacts.
 
-Train a ResNet-50 + LSTM on the SDFVD dataset:
+2. Video model
+- Loads video_resnet_lstm.pt when available.
 
-```powershell
-python train_video.py --dataset "SDFVD/SDFVD" --out video_resnet_lstm.pt --frames_per_video 16 --epochs 10
+3. AI source model (GAN vs Diffusion)
+- Loads models_gan_vs_diffusion/best_model_weights.pt + config.json when available.
+- Used as second-stage classification when content is predicted AI-generated.
+
+## Training Workflows
+
+1. Core training
+
+```bash
+python train.py --dataset "DeepfakeVsReal/Dataset"
 ```
 
-Run inference with Grad-CAM overlays:
+2. Advanced training
 
-```powershell
-python predict_video.py --video path\to\video.mp4 --checkpoint video_resnet_lstm.pt
+```bash
+python train_adv.py --dataset "DeepfakeVsReal/Dataset"
 ```
 
-## Project Structure
+3. Quick advanced training
 
-```
-UAIDE/
-├── app.py                      # Gradio web interface
-├── train.py                    # Training (all model types)
-├── train_video.py              # Video model training
-├── predict_video.py            # Video inference + Grad-CAM
-├── detector.py                 # Heuristic patch-based detector
-├── ethical_assessment.py        # Ethical risk scoring
-├── evaluate_model.py           # Validation / Test evaluation
-├── compare_models.py           # Side-by-side model comparison
-├── diagnose_misclassification.py  # Threshold sweep & FP analysis
-├── print_report.py             # Ethical classification report
-├── video_model.py              # ResNet-LSTM architecture
-├── video_data.py               # Video frame extraction
-├── check_gpu.py                # GPU availability check
-├── requirements.txt
-├── DeepfakeVsReal/Dataset/     # Train / Validation / Test splits
-├── AI vs Real img/             # Additional AI art dataset
-├── SDFVD/                      # Video dataset
-└── model_fusion_best.*         # Trained model artifacts
+```bash
+python train_adv_quickstart.py --dataset "DeepfakeVsReal/Dataset"
 ```
 
-## Datasets
+4. GAN vs Diffusion source training
 
-| Dataset | Location | Contents |
-|---------|----------|----------|
-| DeepfakeVsReal | `DeepfakeVsReal/Dataset/` | Train / Validation / Test splits with Real and Fake folders |
-| AI vs Real img | `AI vs Real img/` | AI-generated art vs real art |
-| SDFVD | `SDFVD/SDFVD/` | `videos_real/` and `videos_fake/` for video detection |
+```bash
+python train_gan_vs_diffusion.py --output_dir models_gan_vs_diffusion
+```
 
-## Technical Details
+5. Video training
 
-- **Framework**: PyTorch with CUDA support
-- **Backbone**: ResNet-50 (ImageNet pretrained)
-- **Frequency features**: Block-wise FFT magnitude + phase (16x16 blocks, 6-channel input)
-- **Attention**: Multi-head cross-attention (8 heads, 512-dim)
-- **Loss**: Focal loss (alpha=0.8, gamma=2.5, label smoothing=0.15)
-- **Optimiser**: AdamW with per-layer learning rates and cosine annealing
-- **Input**: 224x224 center crop (no resize)
-- **Regularisation**: Dropout (0.3–0.5), batch normalisation, weight decay, mixup (alpha=0.2)
+```bash
+python train_video.py --dataset "SDFVD/SDFVD" --out video_resnet_lstm.pt
+```
+
+## Evaluation and Diagnostics
+
+Useful commands:
+
+```bash
+python evaluate_model.py
+python evaluate_validation.py
+python evaluate_validation_quick.py
+python evaluate_validation_comprehensive.py
+python compare_models.py
+python diagnose_misclassification.py
+python analyze_detector_bias.py
+```
+
+## App Outputs
+
+Image and video tabs expose:
+
+- Classification label (Real or AI-generated).
+- AI-likelihood score.
+- Heatmap or Grad-CAM visualization.
+- Ethical status and detailed report.
+- AI Source Analysis:
+    - Predicted source: GAN or DIFFUSION.
+    - GAN probability.
+    - Diffusion probability.
+
+## Dependencies
+
+Install all Python requirements:
+
+```bash
+pip install -r requirements.txt
+```
+
+The repository currently expects core packages such as:
+
+- torch
+- torchvision
+- gradio
+- opencv-python
+- scikit-learn
+- scipy
+- scikit-image
+- Pillow
+- numpy
+- joblib
+- datasets
 
 ## Troubleshooting
 
-| Problem | Fix |
-|---------|-----|
-| CUDA out of memory | Reduce `--max_per_class` or use smaller batch size |
-| Real images flagged as AI | The auto-threshold should handle this; if not, lower `TARGET_REAL_FPR` in `app.py` |
-| Grad-CAM errors | Ensure `opencv-python` is installed |
-| Slow startup | Threshold calibration runs on validation set at launch; reduce `MAX_CALIB_IMAGES` in `app.py` |
+1. timm not found
+- Install with: pip install timm
 
-## Repository
+2. CUDA out of memory
+- Use smaller batch sizes for training.
+- Use a lighter backbone (for example efficientnet_b0/resnet18).
 
-https://github.com/Deshnaa2007/UAIDE
+3. Source model not loaded
+- Ensure both exist:
+    - models_gan_vs_diffusion/best_model_weights.pt
+    - models_gan_vs_diffusion/config.json
+
+4. Video model not loaded
+- Ensure video_resnet_lstm.pt exists in repository root.
+
+5. Slow startup
+- Startup can include model initialization; first launch may take longer.
+
+## Notes on Large Files
+
+Datasets and large model artifacts are local runtime assets and are now covered by .gitignore patterns to keep repository history clean.
+
+## License
+
+MIT (if a LICENSE file is present and configured accordingly).

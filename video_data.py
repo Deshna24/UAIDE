@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import List, Tuple
+import io
+import tempfile
 
 import cv2
 import numpy as np
@@ -154,3 +156,232 @@ class VideoDataset(Dataset):
             tensors.append(img)
         video_tensor = torch.stack(tensors, dim=0)  # (T, C, H, W)
         return video_tensor, torch.tensor(label, dtype=torch.long)
+
+
+class HuggingFaceVideoDataset(Dataset):
+    """Dataset class for HuggingFace deepfake-videos-dataset"""
+    def __init__(
+        self,
+        dataset_name: str = "UniDataPro/deepfake-videos-dataset",
+        split: str = "train",
+        val_split: float = 0.2,
+        seed: int = 42,
+        max_videos_per_class: int = None,
+        frames_per_video: int = 16,
+        frame_stride: int = 4,
+        face_detection: bool = True,
+        transform=None,
+    ):
+        """
+        Load video dataset from HuggingFace Hub.
+        
+        Args:
+            dataset_name: HuggingFace dataset name
+            split: 'train' or 'val' 
+            val_split: validation split ratio
+            seed: random seed for splitting
+            max_videos_per_class: max videos per class (None = all)
+            frames_per_video: number of frames to extract per video
+            frame_stride: stride for frame extraction
+            face_detection: whether to crop faces
+            transform: torchvision transforms
+        """
+        try:
+            from datasets import load_dataset
+        except ImportError:
+            raise ImportError("Please install datasets: pip install datasets")
+        
+        print(f"Loading HuggingFace dataset: {dataset_name}")
+        self.hf_dataset = load_dataset(dataset_name, trust_remote_code=True)
+        
+        # Extract real and fake samples
+        real_samples = []
+        fake_samples = []
+        
+        # Handle different possible dataset structures
+        for split_name in self.hf_dataset.column_names if hasattr(self.hf_dataset, 'column_names') else []:
+            pass
+        
+        # Try to load from main dataset
+        if isinstance(self.hf_dataset, dict):
+            # If it has multiple splits
+            main_split = self.hf_dataset.get('train', self.hf_dataset.get('validation', list(self.hf_dataset.values())[0]))
+        else:
+            main_split = self.hf_dataset
+        
+        # Identify real/fake based on common column patterns
+        label_column = None
+        for col in ['label', 'classification', 'deepfake', 'fake', 'is_fake', 'is_deepfake']:
+            if col in main_split.column_names:
+                label_column = col
+                break
+        
+        # Identify video column
+        video_column = None
+        for col in ['video', 'video_path', 'video_file', 'video_bytes']:
+            if col in main_split.column_names:
+                video_column = col
+                break
+        
+        if video_column is None:
+            # If no explicit video column, use first column that might contain video data
+            video_column = main_split.column_names[0]
+        
+        print(f"Using video column: {video_column}, label column: {label_column}")
+        
+        # Load samples
+        for idx, sample in enumerate(main_split):
+            try:
+                video_data = sample[video_column]
+                
+                # Determine label (assuming binary: 0=real, 1=fake)
+                if label_column and label_column in sample:
+                    label_val = sample[label_column]
+                    # Normalize label to 0 or 1
+                    if isinstance(label_val, str):
+                        label = 0 if label_val.lower() in ['real', 'authentic', '0'] else 1
+                    else:
+                        label = int(label_val) if label_val else 0
+                else:
+                    label = 0  # Default to real if no label
+                
+                # Store sample info
+                sample_info = {
+                    'idx': idx,
+                    'video_data': video_data,
+                    'label': label,
+                }
+                
+                if label == 0:
+                    real_samples.append(sample_info)
+                else:
+                    fake_samples.append(sample_info)
+            except Exception as e:
+                print(f"Skipping sample {idx}: {e}")
+                continue
+        
+        print(f"Loaded {len(real_samples)} real and {len(fake_samples)} fake videos")
+        
+        # Limit per class if specified
+        if max_videos_per_class:
+            real_samples = real_samples[:max_videos_per_class]
+            fake_samples = fake_samples[:max_videos_per_class]
+        
+        # Split into train/val
+        rng = np.random.RandomState(seed)
+        
+        # Shuffle and split real samples
+        real_idx = np.arange(len(real_samples))
+        rng.shuffle(real_idx)
+        real_split = int(round(len(real_samples) * (1.0 - val_split)))
+        real_train = [real_samples[i] for i in real_idx[:real_split]]
+        real_val = [real_samples[i] for i in real_idx[real_split:]]
+        
+        # Shuffle and split fake samples
+        fake_idx = np.arange(len(fake_samples))
+        rng.shuffle(fake_idx)
+        fake_split = int(round(len(fake_samples) * (1.0 - val_split)))
+        fake_train = [fake_samples[i] for i in fake_idx[:fake_split]]
+        fake_val = [fake_samples[i] for i in fake_idx[fake_split:]]
+        
+        # Select based on split
+        if split.lower() == "train":
+            self.samples = real_train + fake_train
+        else:
+            self.samples = real_val + fake_val
+        
+        self.frames_per_video = frames_per_video
+        self.frame_stride = frame_stride
+        self.transform = transform
+        self.face_cropper = FaceCropper() if face_detection else None
+        
+        print(f"Created {split} split with {len(self.samples)} videos")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx: int):
+        sample = self.samples[idx]
+        video_data = sample['video_data']
+        label = sample['label']
+        
+        # Handle different video data formats
+        frames = self._extract_frames_from_data(video_data)
+        
+        if len(frames) < self.frames_per_video:
+            # Pad with last frame if needed
+            while len(frames) < self.frames_per_video:
+                frames.append(frames[-1] if frames else np.zeros((224, 224, 3), dtype=np.uint8))
+        
+        # Apply frame stride sampling
+        frames = frames[::self.frame_stride][:self.frames_per_video]
+        
+        # Ensure we have exactly frames_per_video frames
+        while len(frames) < self.frames_per_video:
+            frames.append(frames[-1] if frames else np.zeros((224, 224, 3), dtype=np.uint8))
+        frames = frames[:self.frames_per_video]
+        
+        # Apply face cropping if enabled
+        if self.face_cropper:
+            frames = [self.face_cropper.crop(f) for f in frames]
+        
+        # Convert to tensors
+        tensors = []
+        for frame_rgb in frames:
+            img = Image.fromarray(frame_rgb)
+            if self.transform is not None:
+                img = self.transform(img)
+            tensors.append(img)
+        
+        video_tensor = torch.stack(tensors, dim=0)  # (T, C, H, W)
+        return video_tensor, torch.tensor(label, dtype=torch.long)
+    
+    def _extract_frames_from_data(self, video_data) -> List[np.ndarray]:
+        """Extract frames from various video data formats"""
+        frames = []
+        
+        # Handle different video data formats
+        if isinstance(video_data, bytes):
+            # Binary video data
+            with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as tmp:
+                tmp.write(video_data)
+                tmp_path = tmp.name
+            try:
+                frames = read_video_frames(
+                    Path(tmp_path),
+                    frames_per_video=self.frames_per_video,
+                    frame_stride=self.frame_stride,
+                    face_cropper=None,  # Handle face cropping separately
+                )
+            finally:
+                try:
+                    import os
+                    os.unlink(tmp_path)
+                except:
+                    pass
+        
+        elif isinstance(video_data, dict) and 'bytes' in video_data:
+            # HuggingFace Audio/Video feature format
+            return self._extract_frames_from_data(video_data['bytes'])
+        
+        elif isinstance(video_data, str):
+            # Video file path
+            try:
+                frames = read_video_frames(
+                    Path(video_data),
+                    frames_per_video=self.frames_per_video,
+                    frame_stride=self.frame_stride,
+                    face_cropper=None,
+                )
+            except Exception as e:
+                print(f"Failed to read video from path {video_data}: {e}")
+                frames = []
+        
+        else:
+            print(f"Unknown video data format: {type(video_data)}")
+            frames = []
+        
+        if not frames:
+            raise RuntimeError("No frames extracted from video data")
+        
+        return frames
