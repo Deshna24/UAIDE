@@ -220,6 +220,7 @@ The repository currently expects core packages such as:
 ## Notes on Large Files
 
 Datasets and large model artifacts are local runtime assets and are now covered by .gitignore patterns to keep repository history clean.
+Link for trained model weights:https://drive.google.com/drive/folders/1KCD_6pwIzqWe_Xz4W42eCAot_X_JBdlE
 
 ## License
 
