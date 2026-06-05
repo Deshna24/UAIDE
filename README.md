@@ -225,3 +225,6 @@ Link for trained model weights:https://drive.google.com/drive/folders/1KCD_6pwIz
 ## License
 
 MIT (if a LICENSE file is present and configured accordingly).
+
+## Deployed Project Link:
+https://ats-27-uaide.hf.space/
